@@ -1,0 +1,33 @@
+[Unit]
+Description=Open Interest Service (Docker Compose)
+Requires=docker.service
+After=docker.service network.target
+
+[Service]
+# Directory containing the docker-compose.yml file
+# IMPORTANT: Update this path to where your code is located
+# e.g., /home/tino/open_interest_service
+WorkingDirectory=/home/ubuntu/open_interest_service
+
+# User/Group:
+# To access the docker socket without being root, the user must be in the 'docker' group.
+# Otherwise, set User=root (or remove these lines entirely to default to root).
+User=root
+Group=root
+
+# Start the container stack
+ExecStart=/usr/bin/docker compose up
+
+# Stop the container stack gracefully
+ExecStop=/usr/bin/docker compose down
+
+# Restart the service automatically if it crashes
+Restart=always
+RestartSec=10
+
+# Helper to remove old containers on start to ensure clean state
+ExecStartPre=-/usr/bin/docker compose down
+ExecStartPre=-/usr/bin/docker compose pull
+
+[Install]
+WantedBy=multi-user.target

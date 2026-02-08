@@ -20,7 +20,7 @@ Ensure you have Docker and Docker Compose installed.
     ```bash
     docker-compose up --build -d
     ```
-    This will start the service on port `8000`. The database will persist in the local `./data` directory.
+    This will start the service on port `9123`. The database will persist in the local `./data` directory.
 
 2.  **Stop**:
     ```bash
@@ -47,11 +47,25 @@ Requires Python 3.10+.
     python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     ```
 
+### Option 3: Systemd Service (Ubuntu/Linux)
+
+A `open-interest.service` file is included for running the application as a background service.
+
+1.  **Edit the Service File**:
+    Open `open-interest.service` and update the `User`, `Group`, `WorkingDirectory`, and `ExecStart` paths to match your environment.
+
+2.  **Install the Service**:
+    ```bash
+    sudo cp open-interest.service /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable open-interest
+    sudo systemctl start open-interest
+    ```
 ## 📡 API Documentation
 
 Once the service is running, you can access the interactive API docs at:
-- **Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
-- **ReDoc**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
+- **Swagger UI**: [http://localhost:9123/docs](http://localhost:9123/docs)
+- **ReDoc**: [http://localhost:9123/redoc](http://localhost:9123/redoc)
 
 ### Endpoints
 
@@ -62,7 +76,7 @@ Returns the list of pairs currently being fetched.
 - **Method**: `GET`
 - **Example**:
     ```bash
-    curl http://localhost:8000/pairs
+    curl http://localhost:9123/pairs
     ```
 
 #### 2. Get Data for a Pair
@@ -79,17 +93,17 @@ Retrieve Open Interest and Funding Rate for a specific pair.
 
     *Get latest data point:*
     ```bash
-    curl "http://localhost:8000/data?pair=BTC/USDC:USDC"
+    curl "http://localhost:9123/data?pair=BTC/USDC:USDC"
     ```
 
     *Get last 24 hours of data:*
     ```bash
-    curl "http://localhost:8000/data?pair=BTC/USDC:USDC&limit=24"
+    curl "http://localhost:9123/data?pair=BTC/USDC:USDC&limit=24"
     ```
 
     *Get specific timestamp:*
     ```bash
-    curl "http://localhost:8000/data?pair=BTC/USDC:USDC&timestamp=2024-05-20T12:00:00"
+    curl "http://localhost:9123/data?pair=BTC/USDC:USDC&timestamp=2024-05-20T12:00:00"
     ```
 
 #### 3. Manually Trigger Fetch
@@ -99,7 +113,7 @@ Force the service to fetch data immediately (useful for testing or initial popul
 - **Method**: `POST`
 - **Example**:
     ```bash
-    curl -X POST http://localhost:8000/trigger_fetch
+    curl -X POST http://localhost:9123/trigger_fetch
     ```
 
 ## ⚙️ Configuration

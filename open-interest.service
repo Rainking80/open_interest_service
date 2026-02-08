@@ -1,0 +1,27 @@
+[Unit]
+Description=Open Interest Service (Hyperliquid Fetcher)
+After=network.target
+
+[Service]
+# User/Group: Change these to the user running the service
+User=ubuntu
+Group=ubuntu
+
+# Directory where the code is located
+WorkingDirectory=/home/ubuntu/open_interest_service
+
+# Environment variables
+# Ensure the data directory exists and is writable by the User
+Environment="DATABASE_URL=sqlite+aiosqlite:///./data/open_interest.db"
+
+# Command to start the service
+# Adjust the path to python/uvicorn if using a virtual environment
+# Example: /home/ubuntu/open_interest_service/venv/bin/uvicorn
+ExecStart=/usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
+
+# Restart policy
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,10 +1,8 @@
-version: '3.8'
-
 services:
   open-interest-service:
     build: .
     ports:
-      - "8000:8000"
+      - "9123:8000"
     environment:
       - DATABASE_URL=sqlite+aiosqlite:////app/data/open_interest.db
     volumes:
