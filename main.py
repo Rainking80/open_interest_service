@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy import desc
 from database import AsyncSessionLocal, OIFunding, init_db
-from fetcher import fetch_and_store, PAIRS_CONFIG
+from fetcher import fetch_and_store, PAIRS_CONFIG, update_pairs_to_top_50, initialize_pairs
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime
 import asyncio
@@ -18,6 +18,10 @@ scheduler = AsyncIOScheduler()
 @app.on_event("startup")
 async def startup_event():
     await init_db()
+    
+    # Initialize pairs (DB restore + Top 50 update)
+    await initialize_pairs()
+    
     # Schedule fetching job
     # Run every hour at minute 0
     scheduler.add_job(fetch_and_store, "cron", minute=0)

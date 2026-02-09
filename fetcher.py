@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
-from database import AsyncSessionLocal, OIFunding
+from database import AsyncSessionLocal, OIFunding, init_db
 from sqlalchemy import select
 import logging
 
@@ -24,6 +24,66 @@ def parse_pair(p):
 TARGET_COINS = {parse_pair(p): p for p in PAIRS_CONFIG}
 
 info = Info(constants.MAINNET_API_URL, skip_ws=True)
+
+async def initialize_pairs():
+    # 1. Load existing pairs from database to ensure monitored pairs are never dropped
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(OIFunding.pair).distinct())
+            existing_pairs = result.scalars().all()
+            
+        count_restored = 0
+        for pair in existing_pairs:
+            coin = parse_pair(pair)
+            if coin not in TARGET_COINS:
+                TARGET_COINS[coin] = pair
+                if pair not in PAIRS_CONFIG:
+                    PAIRS_CONFIG.append(pair)
+                count_restored += 1
+                
+        if count_restored > 0:
+            logger.info(f"Restored {count_restored} pairs from database history.")
+            
+    except Exception as e:
+        logger.error(f"Error restoring pairs from DB: {e}")
+
+    # 2. Update with current top 50 (sync network call)
+    await asyncio.to_thread(update_pairs_to_top_50)
+
+def update_pairs_to_top_50():
+    logger.info("Updating pairs to include top 50 by volume...")
+    try:
+        # Use existing info instance
+        meta_data = info.meta_and_asset_ctxs()
+        universe = meta_data[0]['universe']
+        asset_ctxs = meta_data[1]
+        
+        market_data = []
+        for i, asset in enumerate(universe):
+            market_data.append({
+                "name": asset['name'],
+                "volume": float(asset_ctxs[i].get('dayNtlVlm', 0))
+            })
+            
+        # Sort by volume descending
+        sorted_by_volume = sorted(market_data, key=lambda x: x['volume'], reverse=True)
+        top_50 = sorted_by_volume[:50]
+        
+        count_added = 0
+        for item in top_50:
+            coin = item['name']
+            if coin not in TARGET_COINS:
+                # Construct pair string. Assumption: All are USDC pairs.
+                pair_str = f"{coin}/USDC:USDC"
+                PAIRS_CONFIG.append(pair_str)
+                TARGET_COINS[coin] = pair_str
+                count_added += 1
+                logger.info(f"Added new top pair: {pair_str} (Vol: {item['volume']:,.2f})")
+                
+        logger.info(f"Added {count_added} new pairs. Total pairs: {len(PAIRS_CONFIG)}")
+        
+    except Exception as e:
+        logger.error(f"Error updating top 50 pairs: {e}")
 
 async def store_data(pair, timestamp, oi, funding):
     async with AsyncSessionLocal() as session:
@@ -131,4 +191,9 @@ async def fetch_and_store():
         await store_data(pair_name, current_candle_time, oi, funding_rate)
 
 if __name__ == "__main__":
-    asyncio.run(fetch_and_store())
+    async def main():
+        await init_db()
+        await initialize_pairs()
+        await fetch_and_store()
+        
+    asyncio.run(main())
