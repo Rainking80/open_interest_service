@@ -57,6 +57,7 @@ def update_pairs_to_top_50():
         meta_data = info.meta_and_asset_ctxs()
         universe = meta_data[0]['universe']
         asset_ctxs = meta_data[1]
+        logger.info(f"Retrieved {len(universe)} assets from Hyperliquid")
         
         market_data = []
         for i, asset in enumerate(universe):

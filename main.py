@@ -20,6 +20,7 @@ async def startup_event():
     await init_db()
     
     # Initialize pairs (DB restore + Top 50 update)
+    logger.info("Calling initialize_pairs()...")
     await initialize_pairs()
     
     # Schedule fetching job
