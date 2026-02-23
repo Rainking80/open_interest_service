@@ -124,7 +124,7 @@ def update_pairs_to_top_50():
     except Exception as e:
         logger.error(f"Error updating top 50 pairs: {e}")
 
-async def store_data(pair, timestamp, oi, funding, taker_buy_volume, taker_sell_volume):
+async def store_data(pair, timestamp, oi, funding, taker_buy_volume, taker_sell_volume, cvd):
     async with AsyncSessionLocal() as session:
         # Check if exists
         result = await session.execute(
@@ -141,11 +141,12 @@ async def store_data(pair, timestamp, oi, funding, taker_buy_volume, taker_sell_
                 open_interest=oi,
                 funding_rate=funding,
                 taker_buy_volume=taker_buy_volume,
-                taker_sell_volume=taker_sell_volume
+                taker_sell_volume=taker_sell_volume,
+                cvd=cvd
             )
             session.add(new_entry)
             await session.commit()
-            logger.info(f"Stored {pair} at {timestamp}: OI={oi}, Funding={funding}, TakerBuyV={taker_buy_volume}, TakerSellV={taker_sell_volume}")
+            logger.info(f"Stored {pair} at {timestamp}: OI={oi}, Funding={funding}, TakerBuyV={taker_buy_volume}, TakerSellV={taker_sell_volume}, CVD={cvd}")
         else:
             logger.info(f"Entry already exists for {pair} at {timestamp}")
 
@@ -239,10 +240,11 @@ async def fetch_and_store():
             volume_cache[coin]["buy"] = 0.0
             volume_cache[coin]["sell"] = 0.0
             
-        logger.info(f"[{coin}] WS Accumulated Taker Buy: {taker_buy_volume:.4f}, Taker Sell: {taker_sell_volume:.4f}")
+        cvd = taker_buy_volume - taker_sell_volume
+        logger.info(f"[{coin}] WS Accumulated Taker Buy: {taker_buy_volume:.4f}, Taker Sell: {taker_sell_volume:.4f}, CVD: {cvd:.4f}")
 
         # Store
-        await store_data(pair_name, current_candle_time, oi, funding_rate, taker_buy_volume, taker_sell_volume)
+        await store_data(pair_name, current_candle_time, oi, funding_rate, taker_buy_volume, taker_sell_volume, cvd)
         
         # Add a delay to avoid rate-limiting from the exchange
         await asyncio.sleep(0.5)

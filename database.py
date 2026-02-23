@@ -21,6 +21,7 @@ class OIFunding(Base):
     funding_rate = Column(Float)
     taker_buy_volume = Column(Float)
     taker_sell_volume = Column(Float)
+    cvd = Column(Float)
 
 async def init_db():
     async with engine.begin() as conn:
