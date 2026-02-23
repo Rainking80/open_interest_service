@@ -26,3 +26,18 @@ class OIFunding(Base):
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Automatically add new columns if they are missing (e.g. for existing deployments)
+    from sqlalchemy import text
+    async with engine.begin() as conn:
+        columns_to_add = [
+            ("taker_buy_volume", "FLOAT"),
+            ("taker_sell_volume", "FLOAT"),
+            ("cvd", "FLOAT")
+        ]
+        for col_name, col_type in columns_to_add:
+            try:
+                await conn.execute(text(f"ALTER TABLE oi_funding ADD COLUMN {col_name} {col_type}"))
+            except Exception:
+                # Ignore errors, typically means column already exists
+                pass
