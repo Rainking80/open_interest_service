@@ -226,7 +226,11 @@ async def fetch_and_store():
                  logger.info(f"[{coin}] Predicted funding rate: {funding_rate}")
 
         except Exception as e:
-            logger.error(f"Error fetching funding history for {coin}: {e}")
+            if "429" in str(e):
+                logger.warning(f"[{coin}] Rate limit (429) hit fetching funding history. Fallback to predicted.")
+                await asyncio.sleep(2.0) # Additional backoff to let API cool down
+            else:
+                logger.error(f"Error fetching funding history for {coin}: {e}")
             funding_rate = float(ctx.get('funding', 0))
 
         # Get Accumlated Volume from Websocket Cache
@@ -247,7 +251,7 @@ async def fetch_and_store():
         await store_data(pair_name, current_candle_time, oi, funding_rate, taker_buy_volume, taker_sell_volume, cvd)
         
         # Add a delay to avoid rate-limiting from the exchange
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1.5)
 
 if __name__ == "__main__":
     async def main():
@@ -255,4 +259,6 @@ if __name__ == "__main__":
         await initialize_pairs()
         await fetch_and_store()
         
+    import os
     asyncio.run(main())
+    os._exit(0)
