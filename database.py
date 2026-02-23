@@ -19,6 +19,8 @@ class OIFunding(Base):
     timestamp = Column(DateTime, index=True)  # UTC timestamp
     open_interest = Column(Float)
     funding_rate = Column(Float)
+    taker_buy_volume = Column(Float)
+    taker_sell_volume = Column(Float)
 
 async def init_db():
     async with engine.begin() as conn:

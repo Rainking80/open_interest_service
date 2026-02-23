@@ -5,6 +5,9 @@ from hyperliquid.utils import constants
 from database import AsyncSessionLocal, OIFunding, init_db
 from sqlalchemy import select
 import logging
+import requests
+import threading
+from collections import defaultdict
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -23,7 +26,38 @@ def parse_pair(p):
 
 TARGET_COINS = {parse_pair(p): p for p in PAIRS_CONFIG}
 
-info = Info(constants.MAINNET_API_URL, skip_ws=True)
+info = Info(constants.MAINNET_API_URL, skip_ws=False)
+
+# Track subscriptions and volume cache
+subscribed_coins = set()
+volume_cache = defaultdict(lambda: {"buy": 0.0, "sell": 0.0})
+volume_lock = threading.Lock()
+
+def trade_callback(message):
+    if message.get("channel") == "trades":
+        data = message.get("data", [])
+        for trade in data:
+            coin = trade.get("coin")
+            if coin in TARGET_COINS:
+                side = trade.get("side") # 'B' for taking ask (buy), 'A' for taking bid (sell)
+                try:
+                    vol = float(trade.get("sz", "0")) # Base asset volume
+                    with volume_lock:
+                        if side == 'B':
+                            volume_cache[coin]["buy"] += vol
+                        elif side == 'A':
+                            volume_cache[coin]["sell"] += vol
+                except ValueError:
+                    pass
+
+def subscribe_if_needed(coin):
+    if coin not in subscribed_coins:
+        try:
+            info.subscribe({"type": "trades", "coin": coin}, trade_callback)
+            subscribed_coins.add(coin)
+            logger.info(f"Subscribed to trades for {coin}")
+        except Exception as e:
+            logger.error(f"Failed to subscribe to trades for {coin}: {e}")
 
 async def initialize_pairs():
     # 1. Load existing pairs from database to ensure monitored pairs are never dropped
@@ -40,6 +74,9 @@ async def initialize_pairs():
                 if pair not in PAIRS_CONFIG:
                     PAIRS_CONFIG.append(pair)
                 count_restored += 1
+            
+            # Ensure websocket subscription
+            subscribe_if_needed(coin)
                 
         if count_restored > 0:
             logger.info(f"Restored {count_restored} pairs from database history.")
@@ -77,16 +114,17 @@ def update_pairs_to_top_50():
                 # Construct pair string. Assumption: All are USDC pairs.
                 pair_str = f"{coin}/USDC:USDC"
                 PAIRS_CONFIG.append(pair_str)
-                TARGET_COINS[coin] = pair_str
-                count_added += 1
                 logger.info(f"Added new top pair: {pair_str} (Vol: {item['volume']:,.2f})")
+            
+            # Ensure websocket subscription     
+            subscribe_if_needed(coin)
                 
         logger.info(f"Added {count_added} new pairs. Total pairs: {len(PAIRS_CONFIG)}")
         
     except Exception as e:
         logger.error(f"Error updating top 50 pairs: {e}")
 
-async def store_data(pair, timestamp, oi, funding):
+async def store_data(pair, timestamp, oi, funding, taker_buy_volume, taker_sell_volume):
     async with AsyncSessionLocal() as session:
         # Check if exists
         result = await session.execute(
@@ -101,11 +139,13 @@ async def store_data(pair, timestamp, oi, funding):
                 pair=pair,
                 timestamp=timestamp,
                 open_interest=oi,
-                funding_rate=funding
+                funding_rate=funding,
+                taker_buy_volume=taker_buy_volume,
+                taker_sell_volume=taker_sell_volume
             )
             session.add(new_entry)
             await session.commit()
-            logger.info(f"Stored {pair} at {timestamp}: OI={oi}, Funding={funding}")
+            logger.info(f"Stored {pair} at {timestamp}: OI={oi}, Funding={funding}, TakerBuyV={taker_buy_volume}, TakerSellV={taker_sell_volume}")
         else:
             logger.info(f"Entry already exists for {pair} at {timestamp}")
 
@@ -188,8 +228,24 @@ async def fetch_and_store():
             logger.error(f"Error fetching funding history for {coin}: {e}")
             funding_rate = float(ctx.get('funding', 0))
 
+        # Get Accumlated Volume from Websocket Cache
+        taker_buy_volume = 0.0
+        taker_sell_volume = 0.0
+        with volume_lock:
+            # We snapshot the current accumulated volumes
+            taker_buy_volume = volume_cache[coin]["buy"]
+            taker_sell_volume = volume_cache[coin]["sell"]
+            # Reset cache for the next hour
+            volume_cache[coin]["buy"] = 0.0
+            volume_cache[coin]["sell"] = 0.0
+            
+        logger.info(f"[{coin}] WS Accumulated Taker Buy: {taker_buy_volume:.4f}, Taker Sell: {taker_sell_volume:.4f}")
+
         # Store
-        await store_data(pair_name, current_candle_time, oi, funding_rate)
+        await store_data(pair_name, current_candle_time, oi, funding_rate, taker_buy_volume, taker_sell_volume)
+        
+        # Add a delay to avoid rate-limiting from the exchange
+        await asyncio.sleep(0.5)
 
 if __name__ == "__main__":
     async def main():
