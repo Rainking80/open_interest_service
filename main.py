@@ -3,8 +3,9 @@ from sqlalchemy import select
 from sqlalchemy import desc
 from database import AsyncSessionLocal, OIFunding, init_db
 from fetcher import fetch_and_store, PAIRS_CONFIG, update_pairs_to_top_50, initialize_pairs
+from healthcheck import run_healthcheck
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
 import logging
 
@@ -19,6 +20,12 @@ scheduler = AsyncIOScheduler()
 async def startup_event():
     await init_db()
     
+    async def healthcheck_job():
+        # Using current UTC start of the hour
+        candle_time = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        # PAIRS_CONFIG might have been dynamically updated by fetcher.py
+        await run_healthcheck(candle_time, PAIRS_CONFIG)
+    
     # Initialize pairs (DB restore + Top 50 update)
     logger.info("Calling initialize_pairs()...")
     await initialize_pairs()
@@ -26,6 +33,7 @@ async def startup_event():
     # Schedule fetching job
     # Run every hour at minute 0
     scheduler.add_job(fetch_and_store, "cron", minute=0)
+    scheduler.add_job(healthcheck_job, "cron", minute=5)
     scheduler.start()
     logger.info("Scheduler started.")
     
