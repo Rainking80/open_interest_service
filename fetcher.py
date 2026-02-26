@@ -34,21 +34,24 @@ volume_cache = defaultdict(lambda: {"buy": 0.0, "sell": 0.0})
 volume_lock = threading.Lock()
 
 def trade_callback(message):
-    if message.get("channel") == "trades":
-        data = message.get("data", [])
-        for trade in data:
-            coin = trade.get("coin")
-            if coin in TARGET_COINS:
-                side = trade.get("side") # 'B' for taking ask (buy), 'A' for taking bid (sell)
-                try:
-                    vol = float(trade.get("sz", "0")) # Base asset volume
-                    with volume_lock:
-                        if side == 'B':
-                            volume_cache[coin]["buy"] += vol
-                        elif side == 'A':
-                            volume_cache[coin]["sell"] += vol
-                except ValueError:
-                    pass
+    try:
+        if message.get("channel") == "trades":
+            data = message.get("data", [])
+            for trade in data:
+                coin = trade.get("coin")
+                if coin in TARGET_COINS:
+                    side = trade.get("side") # 'B' for taking ask (buy), 'A' for taking bid (sell)
+                    try:
+                        vol = float(trade.get("sz", "0")) # Base asset volume
+                        with volume_lock:
+                            if side == 'B':
+                                volume_cache[coin]["buy"] += vol
+                            elif side == 'A':
+                                volume_cache[coin]["sell"] += vol
+                    except ValueError:
+                        pass
+    except Exception as e:
+        logger.error(f"Error processing trade callback: {e}")
 
 def subscribe_if_needed(coin):
     if coin not in subscribed_coins:
@@ -114,6 +117,7 @@ def update_pairs_to_top_50():
                 # Construct pair string. Assumption: All are USDC pairs.
                 pair_str = f"{coin}/USDC:USDC"
                 PAIRS_CONFIG.append(pair_str)
+                TARGET_COINS[coin] = pair_str
                 logger.info(f"Added new top pair: {pair_str} (Vol: {item['volume']:,.2f})")
             
             # Ensure websocket subscription     
