@@ -26,7 +26,20 @@ def parse_pair(p):
 
 TARGET_COINS = {parse_pair(p): p for p in PAIRS_CONFIG}
 
-info = Info(constants.MAINNET_API_URL, skip_ws=False)
+def create_info_instance():
+    import time
+    for attempt in range(6):
+        try:
+            return Info(constants.MAINNET_API_URL, skip_ws=False)
+        except Exception as e:
+            if attempt < 5:
+                logger.warning(f"Failed to initialize Info object (attempt {attempt+1}/6). Retrying in 10 seconds... Error: {e}")
+                time.sleep(10)
+            else:
+                logger.error("Could not create Hyperliquid Info object due to repeated errors.")
+                raise e
+
+info = create_info_instance()
 
 # Track subscriptions and volume cache
 subscribed_coins = set()
@@ -136,7 +149,7 @@ async def check_websocket_health():
         logger.error("Websocket thread is dead! Reconnecting...")
         try:
             # Create a new Info instance which starts a new WS connection
-            info = Info(constants.MAINNET_API_URL, skip_ws=False)
+            info = create_info_instance()
             subscribed_coins.clear()
             logger.info("New Info instance created. Resubscribing...")
             for coin in list(TARGET_COINS.keys()):
