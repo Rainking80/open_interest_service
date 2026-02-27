@@ -21,10 +21,15 @@ PAIRS_CONFIG = [
     "SUI/USDC:USDC", "WLD/USDC:USDC"
 ]
 
+# Blacklist pairs that should not be monitored
+BLACKLIST_PAIRS = {
+    "OM/USDC:USDC"
+}
+
 def parse_pair(p):
     return p.split('/')[0]
 
-TARGET_COINS = {parse_pair(p): p for p in PAIRS_CONFIG}
+TARGET_COINS = {parse_pair(p): p for p in PAIRS_CONFIG if p not in BLACKLIST_PAIRS}
 
 def create_info_instance():
     import time
@@ -85,6 +90,8 @@ async def initialize_pairs():
             
         count_restored = 0
         for pair in existing_pairs:
+            if pair in BLACKLIST_PAIRS:
+                continue
             coin = parse_pair(pair)
             if coin not in TARGET_COINS:
                 TARGET_COINS[coin] = pair
@@ -127,9 +134,13 @@ def update_pairs_to_top_50():
         count_added = 0
         for item in top_50:
             coin = item['name']
+            pair_str = f"{coin}/USDC:USDC"
+            
+            if pair_str in BLACKLIST_PAIRS:
+                continue
+                
             if coin not in TARGET_COINS:
                 # Construct pair string. Assumption: All are USDC pairs.
-                pair_str = f"{coin}/USDC:USDC"
                 PAIRS_CONFIG.append(pair_str)
                 TARGET_COINS[coin] = pair_str
                 logger.info(f"Added new top pair: {pair_str} (Vol: {item['volume']:,.2f})")
