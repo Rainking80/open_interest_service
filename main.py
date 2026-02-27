@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy import desc
 from database import AsyncSessionLocal, OIFunding, init_db
-from fetcher import fetch_and_store, PAIRS_CONFIG, update_pairs_to_top_50, initialize_pairs
+from fetcher import fetch_and_store, PAIRS_CONFIG, update_pairs_to_top_50, initialize_pairs, check_websocket_health
 from healthcheck import run_healthcheck
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime, timezone
@@ -34,6 +34,10 @@ async def startup_event():
     # Run every hour at minute 0
     scheduler.add_job(fetch_and_store, "cron", minute=0)
     scheduler.add_job(healthcheck_job, "cron", minute=5)
+    
+    # Schedule WS watchdog every 1 minute
+    scheduler.add_job(check_websocket_health, "interval", minutes=1)
+    
     scheduler.start()
     logger.info("Scheduler started.")
     

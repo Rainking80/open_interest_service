@@ -54,6 +54,7 @@ def trade_callback(message):
         logger.error(f"Error processing trade callback: {e}")
 
 def subscribe_if_needed(coin):
+    global info, subscribed_coins
     if coin not in subscribed_coins:
         try:
             info.subscribe({"type": "trades", "coin": coin}, trade_callback)
@@ -127,6 +128,21 @@ def update_pairs_to_top_50():
         
     except Exception as e:
         logger.error(f"Error updating top 50 pairs: {e}")
+
+async def check_websocket_health():
+    """Watchdog to ensure WS connection is alive. Restarts if dead."""
+    global info, subscribed_coins
+    if info.ws_manager and not info.ws_manager.is_alive():
+        logger.error("Websocket thread is dead! Reconnecting...")
+        try:
+            # Create a new Info instance which starts a new WS connection
+            info = Info(constants.MAINNET_API_URL, skip_ws=False)
+            subscribed_coins.clear()
+            logger.info("New Info instance created. Resubscribing...")
+            for coin in list(TARGET_COINS.keys()):
+                subscribe_if_needed(coin)
+        except Exception as e:
+            logger.error(f"Error reconnecting websocket: {e}")
 
 async def store_data(pair, timestamp, oi, funding, taker_buy_volume, taker_sell_volume, cvd):
     async with AsyncSessionLocal() as session:
