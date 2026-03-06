@@ -19,6 +19,7 @@ class OIFunding(Base):
     timestamp = Column(DateTime, index=True)  # UTC timestamp
     open_interest = Column(Float)
     funding_rate = Column(Float)
+    mark_price = Column(Float)
     taker_buy_volume = Column(Float)
     taker_sell_volume = Column(Float)
     cvd = Column(Float)
@@ -31,6 +32,7 @@ async def init_db():
     from sqlalchemy import text
     async with engine.begin() as conn:
         columns_to_add = [
+            ("mark_price", "FLOAT"),
             ("taker_buy_volume", "FLOAT"),
             ("taker_sell_volume", "FLOAT"),
             ("cvd", "FLOAT")
