@@ -9,3 +9,4 @@ msgpack
 eth-utils
 pydantic
 aiohttp
+pandas
