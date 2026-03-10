@@ -24,6 +24,14 @@ class OIFunding(Base):
     taker_buy_volume = Column(Float)
     taker_sell_volume = Column(Float)
     cvd = Column(Float)
+    open = Column(Float)
+    close = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    volume = Column(Float)
+    btc_informative = Column(Float)
+    eth_informative = Column(Float)
+    sma_slope_4h = Column(Float)
 
 async def init_db():
     async with engine.begin() as conn:
@@ -37,7 +45,15 @@ async def init_db():
             ("mark_price", "FLOAT"),
             ("taker_buy_volume", "FLOAT"),
             ("taker_sell_volume", "FLOAT"),
-            ("cvd", "FLOAT")
+            ("cvd", "FLOAT"),
+            ("open", "FLOAT"),
+            ("close", "FLOAT"),
+            ("high", "FLOAT"),
+            ("low", "FLOAT"),
+            ("volume", "FLOAT"),
+            ("btc_informative", "FLOAT"),
+            ("eth_informative", "FLOAT"),
+            ("sma_slope_4h", "FLOAT")
         ]
         for col_name, col_type in columns_to_add:
             try:

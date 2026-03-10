@@ -26,7 +26,15 @@ def main():
         ("mark_price", "FLOAT"),
         ("taker_buy_volume", "FLOAT"),
         ("taker_sell_volume", "FLOAT"),
-        ("cvd", "FLOAT")
+        ("cvd", "FLOAT"),
+        ("open", "FLOAT"),
+        ("close", "FLOAT"),
+        ("high", "FLOAT"),
+        ("low", "FLOAT"),
+        ("volume", "FLOAT"),
+        ("btc_informative", "FLOAT"),
+        ("eth_informative", "FLOAT"),
+        ("sma_slope_4h", "FLOAT")
     ]
     for col_name, col_type in columns_to_add:
         try:
@@ -104,6 +112,30 @@ def main():
             if pd.isna(tsv): tsv = 0.0
             
             cvd = tbv - tsv
+
+            open_val = float(row.get('open', 0.0))
+            if pd.isna(open_val): open_val = 0.0
+
+            close_val = float(row.get('close', 0.0))
+            if pd.isna(close_val): close_val = 0.0
+
+            high_val = float(row.get('high', 0.0))
+            if pd.isna(high_val): high_val = 0.0
+
+            low_val = float(row.get('low', 0.0))
+            if pd.isna(low_val): low_val = 0.0
+
+            volume_val = float(row.get('volume', 0.0))
+            if pd.isna(volume_val): volume_val = 0.0
+
+            btc_info = float(row.get('btc_informative', 0.0))
+            if pd.isna(btc_info): btc_info = 0.0
+
+            eth_info = float(row.get('eth_informative', 0.0))
+            if pd.isna(eth_info): eth_info = 0.0
+
+            sma4h = float(row.get('sma_slope_4h', 0.0))
+            if pd.isna(sma4h): sma4h = 0.0
             
             # Key matching existing data
             key = (pair, ts_str)
@@ -113,28 +145,28 @@ def main():
             
             if key in existing_data:
                 row_id = existing_data[key]
-                updates.append((oi, fr, mp, tbv, tsv, cvd, row_id))
+                updates.append((oi, fr, mp, tbv, tsv, cvd, open_val, close_val, high_val, low_val, volume_val, btc_info, eth_info, sma4h, row_id))
                 updated += 1
             elif alt_key in existing_data:
                 row_id = existing_data[alt_key]
-                updates.append((oi, fr, mp, tbv, tsv, cvd, row_id))
+                updates.append((oi, fr, mp, tbv, tsv, cvd, open_val, close_val, high_val, low_val, volume_val, btc_info, eth_info, sma4h, row_id))
                 updated += 1
             else:
                 # Insert
-                inserts.append(('Binance', pair, ts_str, oi, fr, mp, tbv, tsv, cvd))
+                inserts.append(('Binance', pair, ts_str, oi, fr, mp, tbv, tsv, cvd, open_val, close_val, high_val, low_val, volume_val, btc_info, eth_info, sma4h))
                 inserted += 1
                 
         if inserts:
             cur.executemany(
                 """INSERT INTO oi_funding 
-                   (exchange, pair, timestamp, open_interest, funding_rate, mark_price, taker_buy_volume, taker_sell_volume, cvd)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (exchange, pair, timestamp, open_interest, funding_rate, mark_price, taker_buy_volume, taker_sell_volume, cvd, open, close, high, low, volume, btc_informative, eth_informative, sma_slope_4h)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 inserts
             )
         if updates:
             cur.executemany(
                 """UPDATE oi_funding 
-                   SET open_interest = ?, funding_rate = ?, mark_price = ?, taker_buy_volume = ?, taker_sell_volume = ?, cvd = ?
+                   SET open_interest = ?, funding_rate = ?, mark_price = ?, taker_buy_volume = ?, taker_sell_volume = ?, cvd = ?, open = ?, close = ?, high = ?, low = ?, volume = ?, btc_informative = ?, eth_informative = ?, sma_slope_4h = ?
                    WHERE id = ?""",
                 updates
             )

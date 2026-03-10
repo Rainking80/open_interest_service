@@ -19,7 +19,10 @@ def main():
     cur = conn.cursor()
 
     # Ensure the taker volume & cvd columns exist on oi_funding
-    for col, coltype in [("taker_buy_volume", "FLOAT"), ("taker_sell_volume", "FLOAT"), ("cvd", "FLOAT")]:
+    for col, coltype in [("taker_buy_volume", "FLOAT"), ("taker_sell_volume", "FLOAT"), ("cvd", "FLOAT"),
+                         ("open", "FLOAT"), ("close", "FLOAT"), ("high", "FLOAT"), ("low", "FLOAT"),
+                         ("volume", "FLOAT"), ("btc_informative", "FLOAT"), ("eth_informative", "FLOAT"),
+                         ("sma_slope_4h", "FLOAT")]:
         try:
             cur.execute(f"ALTER TABLE oi_funding ADD COLUMN {col} {coltype}")
         except Exception:
@@ -46,10 +49,19 @@ def main():
 
         for _, row in df.iterrows():
             ts = row['date'].strftime('%Y-%m-%d %H:%M:%S.000000')
-            tbv = row['taker_buy_volume']
-            tsv = row['taker_sell_volume']
-            fr = row['funding_rate']
+            tbv = row.get('taker_buy_volume', 0.0)
+            tsv = row.get('taker_sell_volume', 0.0)
+            fr = row.get('funding_rate', 0.0)
             cvd = tbv - tsv
+
+            open_val = row.get('open', 0.0)
+            close_val = row.get('close', 0.0)
+            high_val = row.get('high', 0.0)
+            low_val = row.get('low', 0.0)
+            volume_val = row.get('volume', 0.0)
+            btc_info = row.get('btc_informative', 0.0)
+            eth_info = row.get('eth_informative', 0.0)
+            sma4h = row.get('sma_slope_4h', 0.0)
 
             # Check if row already exists
             cur.execute(
@@ -63,9 +75,10 @@ def main():
                 if existing[1] is None or existing[1] == 0.0:
                     cur.execute(
                         """UPDATE oi_funding 
-                           SET taker_buy_volume = ?, taker_sell_volume = ?, cvd = ?, funding_rate = COALESCE(funding_rate, ?)
+                           SET taker_buy_volume = ?, taker_sell_volume = ?, cvd = ?, funding_rate = COALESCE(funding_rate, ?),
+                               open = ?, close = ?, high = ?, low = ?, volume = ?, btc_informative = ?, eth_informative = ?, sma_slope_4h = ?
                            WHERE id = ?""",
-                        (tbv, tsv, cvd, fr, existing[0])
+                        (tbv, tsv, cvd, fr, open_val, close_val, high_val, low_val, volume_val, btc_info, eth_info, sma4h, existing[0])
                     )
                     updated += 1
                 else:
@@ -74,9 +87,9 @@ def main():
                 # Insert new row with OI=0 (S3 data doesn't have OI)
                 cur.execute(
                     """INSERT INTO oi_funding 
-                       (pair, timestamp, open_interest, funding_rate, taker_buy_volume, taker_sell_volume, cvd)
-                       VALUES (?, ?, 0.0, ?, ?, ?, ?)""",
-                    (pair, ts, fr, tbv, tsv, cvd)
+                       (pair, timestamp, open_interest, funding_rate, taker_buy_volume, taker_sell_volume, cvd, open, close, high, low, volume, btc_informative, eth_informative, sma_slope_4h)
+                       VALUES (?, ?, 0.0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (pair, ts, fr, tbv, tsv, cvd, open_val, close_val, high_val, low_val, volume_val, btc_info, eth_info, sma4h)
                 )
                 inserted += 1
 

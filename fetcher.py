@@ -181,7 +181,7 @@ async def check_websocket_health():
         except Exception as e:
             logger.error(f"Error reconnecting websocket: {e}")
 
-async def store_data(pair, timestamp, oi, funding, mark_price, taker_buy_volume, taker_sell_volume, cvd, exchange="Hyperliquid"):
+async def store_data(pair, timestamp, oi, funding, mark_price, taker_buy_volume, taker_sell_volume, cvd, exchange="Hyperliquid", open_val=0.0, close_val=0.0, high_val=0.0, low_val=0.0, volume_val=0.0, btc_info=0.0, eth_info=0.0, sma4h=0.0):
     async with AsyncSessionLocal() as session:
         # Check if exists
         result = await session.execute(
@@ -202,7 +202,15 @@ async def store_data(pair, timestamp, oi, funding, mark_price, taker_buy_volume,
                 mark_price=mark_price,
                 taker_buy_volume=taker_buy_volume,
                 taker_sell_volume=taker_sell_volume,
-                cvd=cvd
+                cvd=cvd,
+                open=open_val,
+                close=close_val,
+                high=high_val,
+                low=low_val,
+                volume=volume_val,
+                btc_informative=btc_info,
+                eth_informative=eth_info,
+                sma_slope_4h=sma4h
             )
             session.add(new_entry)
             await session.commit()
@@ -365,6 +373,11 @@ async def fetch_and_store_binance():
                 taker_buy_volume = 0.0
                 taker_sell_volume = 0.0
                 cvd = 0.0
+                open_val = 0.0
+                close_val = 0.0
+                high_val = 0.0
+                low_val = 0.0
+                volume_val = 0.0
                 try:
                     # Fetch Klines to get real Taker Volume
                     async with session.get(f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=1h&limit=2") as kline_resp:
@@ -372,6 +385,11 @@ async def fetch_and_store_binance():
                             klines = await kline_resp.json()
                             for k in klines:
                                 if k[0] == prev_hour_ts:
+                                    open_val = float(k[1])
+                                    high_val = float(k[2])
+                                    low_val = float(k[3])
+                                    close_val = float(k[4])
+                                    volume_val = float(k[5])
                                     total_volume = float(k[5])
                                     taker_buy_volume = float(k[9])
                                     taker_sell_volume = total_volume - taker_buy_volume
@@ -384,7 +402,7 @@ async def fetch_and_store_binance():
 
                 logger.info(f"[Binance {coin}] OI={oi:.4f}, MarkPx={mark_price:.4f}, FR={funding_rate:.6f}, BuyV={taker_buy_volume:.4f}, SellV={taker_sell_volume:.4f}")
 
-                await store_data(pair_name, current_candle_time, oi, funding_rate, mark_price, taker_buy_volume, taker_sell_volume, cvd, exchange="Binance")
+                await store_data(pair_name, current_candle_time, oi, funding_rate, mark_price, taker_buy_volume, taker_sell_volume, cvd, exchange="Binance", open_val=open_val, close_val=close_val, high_val=high_val, low_val=low_val, volume_val=volume_val)
                 
                 await asyncio.sleep(0.5)
 
