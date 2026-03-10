@@ -61,6 +61,36 @@ def main():
     total_inserted = 0
     total_updated = 0
 
+    btc_data = {}
+    eth_data = {}
+
+    for fpath in csv_files:
+        fname = os.path.basename(fpath)
+        if fname.startswith('BTCUSDT_'):
+            df_btc = pd.read_csv(fpath)
+            if not df_btc.empty:
+                df_btc['datetime'] = pd.to_datetime(df_btc['datetime'])
+                for _, row in df_btc.iterrows():
+                    ts_str = str(row['datetime'])
+                    if '.' not in ts_str: ts_str += '.000000'
+                    btc_data[ts_str] = float(row.get('close', 0.0))
+        elif fname.startswith('ETHUSDT_'):
+            df_eth = pd.read_csv(fpath)
+            if not df_eth.empty:
+                df_eth['datetime'] = pd.to_datetime(df_eth['datetime'])
+                for _, row in df_eth.iterrows():
+                    ts_str = str(row['datetime'])
+                    if '.' not in ts_str: ts_str += '.000000'
+                    eth_data[ts_str] = float(row.get('close', 0.0))
+
+    def sort_order(f):
+        fname = os.path.basename(f)
+        if fname.startswith('BTCUSDT_') or fname.startswith('ETHUSDT_'):
+            return 1
+        return 0
+
+    csv_files = sorted(csv_files, key=lambda f: (sort_order(f), f))
+
     for fpath in csv_files:
         fname = os.path.basename(fpath)
         # Assuming format like AAVEUSDT_Historical_Data_...
@@ -128,11 +158,15 @@ def main():
             volume_val = float(row.get('volume', 0.0))
             if pd.isna(volume_val): volume_val = 0.0
 
-            btc_info = float(row.get('btc_informative', 0.0))
-            if pd.isna(btc_info): btc_info = 0.0
+            btc_info = btc_data.get(ts_str, 0.0)
+            if btc_info == 0.0:
+                btc_info = float(row.get('btc_informative', 0.0))
+                if pd.isna(btc_info): btc_info = 0.0
 
-            eth_info = float(row.get('eth_informative', 0.0))
-            if pd.isna(eth_info): eth_info = 0.0
+            eth_info = eth_data.get(ts_str, 0.0)
+            if eth_info == 0.0:
+                eth_info = float(row.get('eth_informative', 0.0))
+                if pd.isna(eth_info): eth_info = 0.0
 
             sma4h = float(row.get('sma_slope_4h', 0.0))
             if pd.isna(sma4h): sma4h = 0.0

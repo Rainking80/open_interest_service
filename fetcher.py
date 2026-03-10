@@ -251,6 +251,7 @@ async def fetch_and_store():
     current_candle_time = now.replace(minute=0, second=0, microsecond=0)
     
     # 2. Loop through target pairs
+    hl_results = {}
     for coin, pair_name in TARGET_COINS.items():
         if coin not in coin_to_ctx:
             logger.warning(f"Coin {coin} not found in Hyperliquid universe")
@@ -324,10 +325,29 @@ async def fetch_and_store():
         logger.info(f"[{coin}] WS Accumulated Taker Buy: {taker_buy_volume:.4f}, Taker Sell: {taker_sell_volume:.4f}, CVD: {cvd:.4f}")
 
         # Store
-        await store_data(pair_name, current_candle_time, oi, funding_rate, mark_price, taker_buy_volume, taker_sell_volume, cvd)
+        hl_results[coin] = {
+            "pair": pair_name,
+            "oi": oi,
+            "funding_rate": funding_rate,
+            "mark_price": mark_price,
+            "taker_buy_volume": taker_buy_volume,
+            "taker_sell_volume": taker_sell_volume,
+            "cvd": cvd
+        }
         
         # Add a delay to avoid rate-limiting from the exchange (max 60 req/min)
         await asyncio.sleep(2.0)
+
+    def sort_order(c):
+        if c in ("BTC", "ETH"): return 1
+        return 0
+
+    for coin in sorted(hl_results.keys(), key=sort_order):
+        d = hl_results[coin]
+        await store_data(
+            d["pair"], current_candle_time, d["oi"], d["funding_rate"], d["mark_price"],
+            d["taker_buy_volume"], d["taker_sell_volume"], d["cvd"]
+        )
 
 async def fetch_and_store_binance():
     logger.info("Starting Binance fetch job...")
@@ -344,9 +364,10 @@ async def fetch_and_store_binance():
                     premium_data = await resp.json()
                     premium_map = {item['symbol']: item for item in premium_data}
                 else:
-                    logger.error(f"Binance premiumIndex returned {resp.status}")
+                    logger.warning(f"Binance premiumIndex returned {resp.status}")
                     premium_map = {}
                     
+            binance_results = {}
             for coin, pair_name in TARGET_COINS.items():
                 symbol = f"{coin}USDT"
                 
@@ -402,9 +423,39 @@ async def fetch_and_store_binance():
 
                 logger.info(f"[Binance {coin}] OI={oi:.4f}, MarkPx={mark_price:.4f}, FR={funding_rate:.6f}, BuyV={taker_buy_volume:.4f}, SellV={taker_sell_volume:.4f}")
 
-                await store_data(pair_name, current_candle_time, oi, funding_rate, mark_price, taker_buy_volume, taker_sell_volume, cvd, exchange="Binance", open_val=open_val, close_val=close_val, high_val=high_val, low_val=low_val, volume_val=volume_val)
+                binance_results[coin] = {
+                    "pair": pair_name,
+                    "oi": oi,
+                    "funding_rate": funding_rate,
+                    "mark_price": mark_price,
+                    "taker_buy_volume": taker_buy_volume,
+                    "taker_sell_volume": taker_sell_volume,
+                    "cvd": cvd,
+                    "open_val": open_val,
+                    "close_val": close_val,
+                    "high_val": high_val,
+                    "low_val": low_val,
+                    "volume_val": volume_val
+                }
                 
                 await asyncio.sleep(0.5)
+
+            btc_info = binance_results.get("BTC", {}).get("close_val", 0.0)
+            eth_info = binance_results.get("ETH", {}).get("close_val", 0.0)
+
+            def sort_order_binance(c):
+                if c in ("BTC", "ETH"): return 1
+                return 0
+
+            for coin in sorted(binance_results.keys(), key=sort_order_binance):
+                d = binance_results[coin]
+                await store_data(
+                    d["pair"], current_candle_time, d["oi"], d["funding_rate"], d["mark_price"],
+                    d["taker_buy_volume"], d["taker_sell_volume"], d["cvd"], exchange="Binance",
+                    open_val=d["open_val"], close_val=d["close_val"], high_val=d["high_val"],
+                    low_val=d["low_val"], volume_val=d["volume_val"],
+                    btc_info=btc_info, eth_info=eth_info
+                )
 
     except Exception as e:
         logger.error(f"Binance Fetch Job Failed: {e}")

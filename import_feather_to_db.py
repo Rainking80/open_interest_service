@@ -33,6 +33,32 @@ def main():
     total_updated = 0
     total_skipped = 0
 
+    btc_data = {}
+    eth_data = {}
+
+    for fpath in feathers:
+        fname = os.path.basename(fpath)
+        if 'hl_orderflow_BTC_1h.feather' in fname:
+            df_btc = pd.read_feather(fpath)
+            df_btc['date'] = pd.to_datetime(df_btc['date'], utc=True)
+            for _, row in df_btc.iterrows():
+                ts = row['date'].strftime('%Y-%m-%d %H:%M:%S.000000')
+                btc_data[ts] = row.get('close', 0.0)
+        elif 'hl_orderflow_ETH_1h.feather' in fname:
+            df_eth = pd.read_feather(fpath)
+            df_eth['date'] = pd.to_datetime(df_eth['date'], utc=True)
+            for _, row in df_eth.iterrows():
+                ts = row['date'].strftime('%Y-%m-%d %H:%M:%S.000000')
+                eth_data[ts] = row.get('close', 0.0)
+
+    def sort_order(f):
+        # return 1 for BTC/ETH so they are processed last
+        if 'hl_orderflow_BTC_1h.feather' in f or 'hl_orderflow_ETH_1h.feather' in f:
+            return 1
+        return 0
+
+    feathers = sorted(feathers, key=lambda f: (sort_order(f), f))
+
     for fpath in feathers:
         # Extract coin name from filename: hl_orderflow_ETH_1h.feather -> ETH
         fname = os.path.basename(fpath)
@@ -59,8 +85,17 @@ def main():
             high_val = row.get('high', 0.0)
             low_val = row.get('low', 0.0)
             volume_val = row.get('volume', 0.0)
-            btc_info = row.get('btc_informative', 0.0)
-            eth_info = row.get('eth_informative', 0.0)
+            
+            # fill with our preloaded data
+            btc_info = btc_data.get(ts, 0.0)
+            eth_info = eth_data.get(ts, 0.0)
+
+            # fallback to row.get if it's BTC or ETH itself or preloaded data is empty
+            if btc_info == 0.0:
+                btc_info = row.get('btc_informative', 0.0)
+            if eth_info == 0.0:
+                eth_info = row.get('eth_informative', 0.0)
+
             sma4h = row.get('sma_slope_4h', 0.0)
 
             # Check if row already exists
