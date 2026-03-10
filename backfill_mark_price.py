@@ -34,7 +34,7 @@ async def get_rows_missing_mark_price():
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(OIFunding)
-            .where(OIFunding.mark_price.is_(None))
+            .where(OIFunding.mark_price.is_(None), OIFunding.exchange == "Hyperliquid")
             .order_by(OIFunding.pair, OIFunding.timestamp)
         )
         return result.scalars().all()

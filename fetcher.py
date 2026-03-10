@@ -8,6 +8,7 @@ import logging
 import requests
 import threading
 from collections import defaultdict
+import aiohttp
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -40,6 +41,18 @@ def create_info_instance():
             if attempt < 5:
                 logger.warning(f"Failed to initialize Info object (attempt {attempt+1}/6). Retrying in 10 seconds... Error: {e}")
                 time.sleep(10)
+            else:
+                logger.error("Could not create Hyperliquid Info object due to repeated errors.")
+                raise e
+
+async def create_info_instance_async():
+    for attempt in range(6):
+        try:
+            return await asyncio.to_thread(Info, constants.MAINNET_API_URL, skip_ws=False)
+        except Exception as e:
+            if attempt < 5:
+                logger.warning(f"Failed to initialize Info object (attempt {attempt+1}/6). Retrying in 10 seconds... Error: {e}")
+                await asyncio.sleep(10)
             else:
                 logger.error("Could not create Hyperliquid Info object due to repeated errors.")
                 raise e
@@ -159,8 +172,8 @@ async def check_websocket_health():
     if info.ws_manager and not info.ws_manager.is_alive():
         logger.error("Websocket thread is dead! Reconnecting...")
         try:
-            # Create a new Info instance which starts a new WS connection
-            info = create_info_instance()
+            # Create a new Info instance which starts a new WS connection natively in async way
+            info = await create_info_instance_async()
             subscribed_coins.clear()
             logger.info("New Info instance created. Resubscribing...")
             for coin in list(TARGET_COINS.keys()):
@@ -168,19 +181,21 @@ async def check_websocket_health():
         except Exception as e:
             logger.error(f"Error reconnecting websocket: {e}")
 
-async def store_data(pair, timestamp, oi, funding, mark_price, taker_buy_volume, taker_sell_volume, cvd):
+async def store_data(pair, timestamp, oi, funding, mark_price, taker_buy_volume, taker_sell_volume, cvd, exchange="Hyperliquid"):
     async with AsyncSessionLocal() as session:
         # Check if exists
         result = await session.execute(
             select(OIFunding).where(
                 OIFunding.pair == pair,
-                OIFunding.timestamp == timestamp
+                OIFunding.timestamp == timestamp,
+                OIFunding.exchange == exchange
             )
         )
         existing = result.scalars().first()
         if not existing:
             new_entry = OIFunding(
                 pair=pair,
+                exchange=exchange,
                 timestamp=timestamp,
                 open_interest=oi,
                 funding_rate=funding,
@@ -201,9 +216,8 @@ async def fetch_and_store():
     # 1. Fetch global state for OI (Snapshots are efficient)
     try:
         # meta_and_asset_ctxs is synchronous in the SDK but conducts network calls.
-        # Run in executor to avoid blocking if using async scheduler (though simple scheduling is fine)
-        # For simplicity, just call it.
-        meta_data = info.meta_and_asset_ctxs()
+        # Run in executor to avoid blocking the event loop.
+        meta_data = await asyncio.to_thread(info.meta_and_asset_ctxs)
         universe = meta_data[0]['universe']
         asset_ctxs = meta_data[1]
     except Exception as e:
@@ -260,7 +274,8 @@ async def fetch_and_store():
         
         funding_rate = 0.0
         try:
-            history = info.funding_history(coin, start_ts, end_ts)
+            # Run in executor to avoid blocking the event loop
+            history = await asyncio.to_thread(info.funding_history, coin, start_ts, end_ts)
             logger.debug(f"[{coin}] Funding history items: {len(history)}")
             
             found = False
@@ -306,11 +321,82 @@ async def fetch_and_store():
         # Add a delay to avoid rate-limiting from the exchange (max 60 req/min)
         await asyncio.sleep(2.0)
 
+async def fetch_and_store_binance():
+    logger.info("Starting Binance fetch job...")
+    
+    now = datetime.now(timezone.utc)
+    current_candle_time = now.replace(minute=0, second=0, microsecond=0)
+    prev_hour_ts = int((current_candle_time - timedelta(hours=1)).timestamp() * 1000)
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            # 1. Fetch Premium Index
+            async with session.get("https://fapi.binance.com/fapi/v1/premiumIndex") as resp:
+                if resp.status == 200:
+                    premium_data = await resp.json()
+                    premium_map = {item['symbol']: item for item in premium_data}
+                else:
+                    logger.error(f"Binance premiumIndex returned {resp.status}")
+                    premium_map = {}
+                    
+            for coin, pair_name in TARGET_COINS.items():
+                symbol = f"{coin}USDT"
+                
+                mark_price = 0.0
+                funding_rate = 0.0
+                if symbol in premium_map:
+                    mark_price = float(premium_map[symbol].get('markPrice', 0))
+                    funding_rate = float(premium_map[symbol].get('lastFundingRate', 0))
+                else:
+                    logger.warning(f"[Binance {coin}] Symbol {symbol} not found in premiumIndex")
+                
+                oi = 0.0
+                try:
+                    async with session.get(f"https://fapi.binance.com/fapi/v1/openInterest?symbol={symbol}") as oi_resp:
+                        if oi_resp.status == 200:
+                            oi_data = await oi_resp.json()
+                            oi = float(oi_data.get('openInterest', 0))
+                        else:
+                            # Not an error necessarily, some pairs might not exist on Binance Futures
+                            logger.warning(f"[Binance {coin}] openInterest returned {oi_resp.status}")
+                except Exception as e:
+                    logger.error(f"Error fetching OI for {coin} on Binance: {e}")
+
+                taker_buy_volume = 0.0
+                taker_sell_volume = 0.0
+                cvd = 0.0
+                try:
+                    # Fetch Klines to get real Taker Volume
+                    async with session.get(f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=1h&limit=2") as kline_resp:
+                        if kline_resp.status == 200:
+                            klines = await kline_resp.json()
+                            for k in klines:
+                                if k[0] == prev_hour_ts:
+                                    total_volume = float(k[5])
+                                    taker_buy_volume = float(k[9])
+                                    taker_sell_volume = total_volume - taker_buy_volume
+                                    cvd = taker_buy_volume - taker_sell_volume
+                                    break
+                        else:
+                            logger.warning(f"[Binance {coin}] klines returned {kline_resp.status}")
+                except Exception as e:
+                    logger.error(f"Error fetching klines for {coin} on Binance: {e}")
+
+                logger.info(f"[Binance {coin}] OI={oi:.4f}, MarkPx={mark_price:.4f}, FR={funding_rate:.6f}, BuyV={taker_buy_volume:.4f}, SellV={taker_sell_volume:.4f}")
+
+                await store_data(pair_name, current_candle_time, oi, funding_rate, mark_price, taker_buy_volume, taker_sell_volume, cvd, exchange="Binance")
+                
+                await asyncio.sleep(0.5)
+
+    except Exception as e:
+        logger.error(f"Binance Fetch Job Failed: {e}")
+
 if __name__ == "__main__":
     async def main():
         await init_db()
         await initialize_pairs()
         await fetch_and_store()
+        await fetch_and_store_binance()
         
     import os
     asyncio.run(main())

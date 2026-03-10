@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy import desc
 from database import AsyncSessionLocal, OIFunding, init_db
-from fetcher import fetch_and_store, PAIRS_CONFIG, update_pairs_to_top_50, initialize_pairs, check_websocket_health
+from fetcher import fetch_and_store, fetch_and_store_binance, PAIRS_CONFIG, update_pairs_to_top_50, initialize_pairs, check_websocket_health
 from healthcheck import run_healthcheck
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime, timezone
@@ -33,6 +33,7 @@ async def startup_event():
     # Schedule fetching job
     # Run every hour at minute 0
     scheduler.add_job(fetch_and_store, "cron", minute=0)
+    scheduler.add_job(fetch_and_store_binance, "cron", minute=0)
     scheduler.add_job(healthcheck_job, "cron", minute=5)
     
     # Schedule WS watchdog every 1 minute
@@ -44,15 +45,16 @@ async def startup_event():
     # Run immediately on startup
     logger.info("Triggering initial fetch...")
     asyncio.create_task(fetch_and_store())
+    asyncio.create_task(fetch_and_store_binance())
 
 @app.get("/pairs")
 async def get_pairs():
     return PAIRS_CONFIG
 
 @app.get("/data")
-async def get_data(pair: str = Query(..., description="Trading pair, e.g. BTC/USDC:USDC"), timestamp: datetime = None, limit: int = Query(None, gt=0)):
+async def get_data(pair: str = Query(..., description="Trading pair, e.g. BTC/USDC:USDC"), exchange: str = Query("Hyperliquid", description="Exchange name"), timestamp: datetime = None, limit: int = Query(None, gt=0)):
     async with AsyncSessionLocal() as session:
-        query = select(OIFunding).where(OIFunding.pair == pair)
+        query = select(OIFunding).where(OIFunding.pair == pair, OIFunding.exchange == exchange)
         
         if timestamp:
             # Query by specific timestamp
@@ -82,4 +84,5 @@ async def get_data(pair: str = Query(..., description="Trading pair, e.g. BTC/US
 async def trigger_fetch():
     """Manually trigger data fetch"""
     asyncio.create_task(fetch_and_store())
+    asyncio.create_task(fetch_and_store_binance())
     return {"status": "Fetch triggered"}
