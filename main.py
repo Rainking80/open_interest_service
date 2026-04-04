@@ -52,7 +52,13 @@ async def get_pairs():
     return PAIRS_CONFIG
 
 @app.get("/data")
-async def get_data(pair: str = Query(..., description="Trading pair, e.g. BTC/USDC:USDC"), exchange: str = Query("Hyperliquid", description="Exchange name"), timestamp: datetime = None, limit: int = Query(None, gt=0)):
+async def get_data(
+    pair: str = Query(..., description="Trading pair, e.g. BTC/USDC:USDC"),
+    exchange: str = Query("Hyperliquid", description="Exchange name"),
+    timestamp: datetime = None,
+    limit: int = Query(None, gt=0),
+    since: datetime = Query(None, description="Cursor for pagination: returns rows with timestamp < since (older than this value)")
+):
     async with AsyncSessionLocal() as session:
         query = select(OIFunding).where(OIFunding.pair == pair, OIFunding.exchange == exchange)
         
@@ -66,7 +72,10 @@ async def get_data(pair: str = Query(..., description="Trading pair, e.g. BTC/US
             return item
         
         if limit:
-            # Query candles into the past
+            # Pagination: if `since` is provided, only return rows older than that timestamp
+            if since:
+                query = query.where(OIFunding.timestamp < since)
+            # Query candles into the past, ordered newest-first
             query = query.order_by(desc(OIFunding.timestamp)).limit(limit)
             result = await session.execute(query)
             items = result.scalars().all()
