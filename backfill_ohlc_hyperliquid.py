@@ -46,7 +46,10 @@ def main():
         SELECT id, pair, timestamp
         FROM oi_funding
         WHERE exchange = 'Hyperliquid'
-          AND ("open" IS NULL OR "high" IS NULL OR "low" IS NULL OR "close" IS NULL OR "volume" IS NULL)
+          AND (
+              "open" IS NULL OR "high" IS NULL OR "low" IS NULL OR "close" IS NULL OR "volume" IS NULL
+              OR "open" = 0.0 OR "high" = 0.0 OR "low" = 0.0 OR "close" = 0.0 OR "volume" = 0.0
+          )
         ORDER BY pair, timestamp
     """)
     rows = cur.fetchall()
@@ -210,7 +213,8 @@ def main():
         SELECT id, timestamp
         FROM oi_funding
         WHERE exchange = 'Hyperliquid'
-          AND (btc_informative IS NULL OR eth_informative IS NULL)
+          AND (btc_informative IS NULL OR eth_informative IS NULL
+               OR btc_informative = 0.0 OR eth_informative = 0.0)
     """)
     info_rows = cur.fetchall()
 
@@ -236,7 +240,10 @@ def main():
     cur.execute("""
         SELECT COUNT(*) FROM oi_funding
         WHERE exchange = 'Hyperliquid'
-          AND ("open" IS NULL OR "high" IS NULL OR "low" IS NULL OR "close" IS NULL OR "volume" IS NULL)
+          AND (
+              "open" IS NULL OR "high" IS NULL OR "low" IS NULL OR "close" IS NULL OR "volume" IS NULL
+              OR "open" = 0.0 OR "high" = 0.0 OR "low" = 0.0 OR "close" = 0.0 OR "volume" = 0.0
+          )
     """)
     remaining_nulls = cur.fetchone()[0]
 

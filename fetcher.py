@@ -194,7 +194,7 @@ async def check_websocket_health():
         except Exception as e:
             logger.error(f"Error reconnecting websocket: {e}")
 
-async def store_data(pair, timestamp, oi, funding, mark_price, taker_buy_volume, taker_sell_volume, cvd, exchange="Hyperliquid", open_val=0.0, close_val=0.0, high_val=0.0, low_val=0.0, volume_val=0.0, btc_info=0.0, eth_info=0.0, sma4h=0.0):
+async def store_data(pair, timestamp, oi, funding, mark_price, taker_buy_volume, taker_sell_volume, cvd, exchange="Hyperliquid", open_val=None, close_val=None, high_val=None, low_val=None, volume_val=None, btc_info=0.0, eth_info=0.0, sma4h=0.0):
     async with AsyncSessionLocal() as session:
         # Check if exists
         result = await session.execute(
@@ -343,28 +343,52 @@ async def fetch_and_store():
             logger.info(f"[{coin}] WS Accumulated Taker Buy: {taker_buy_volume:.4f}, Taker Sell: {taker_sell_volume:.4f}, CVD: {cvd:.4f}")
 
             # Fetch OHLCV candle data from Hyperliquid
-            open_val = 0.0
-            close_val = 0.0
-            high_val = 0.0
-            low_val = 0.0
-            volume_val = 0.0
-            try:
-                candles = await asyncio.to_thread(
-                    info.candles_snapshot, coin, "1h", prev_hour_ts, end_ts
-                )
-                for c in candles:
-                    if c["t"] == prev_hour_ts:
-                        open_val = float(c["o"])
-                        high_val = float(c["h"])
-                        low_val = float(c["l"])
-                        close_val = float(c["c"])
-                        volume_val = float(c["v"])
-                        logger.info(f"[{coin}] Candle OHLCV: O={open_val}, H={high_val}, L={low_val}, C={close_val}, V={volume_val}")
-                        break
-                else:
-                    logger.warning(f"[{coin}] No candle found for {current_candle_time - timedelta(hours=1)}")
-            except Exception as e:
-                logger.error(f"[{coin}] Error fetching candles: {e}")
+            open_val = None
+            close_val = None
+            high_val = None
+            low_val = None
+            volume_val = None
+
+            async def _fetch_candle(attempt_label=""):
+                """Try to fetch and match a candle for the previous hour."""
+                try:
+                    candles = await asyncio.to_thread(
+                        info.candles_snapshot, coin, "1h", prev_hour_ts, end_ts
+                    )
+                    # Find candle whose open timestamp is closest to prev_hour_ts
+                    # (within 60s tolerance to handle minor API timestamp drift)
+                    for c in candles:
+                        if abs(c["t"] - prev_hour_ts) < 60_000:  # within 1 minute
+                            return {
+                                "o": float(c["o"]),
+                                "h": float(c["h"]),
+                                "l": float(c["l"]),
+                                "c": float(c["c"]),
+                                "v": float(c["v"]),
+                            }
+                    logger.debug(f"[{coin}]{attempt_label} Candle timestamps returned: {[c['t'] for c in candles]}, looking for {prev_hour_ts}")
+                except Exception as e:
+                    logger.error(f"[{coin}]{attempt_label} Error fetching candles: {e}")
+                return None
+
+            # First attempt
+            candle_data = await _fetch_candle()
+
+            # If no candle found, wait a bit and retry (candle may not be finalized yet)
+            if candle_data is None:
+                logger.info(f"[{coin}] No candle on first attempt, retrying in 15s...")
+                await asyncio.sleep(15)
+                candle_data = await _fetch_candle(" (retry)")
+
+            if candle_data:
+                open_val = candle_data["o"]
+                high_val = candle_data["h"]
+                low_val = candle_data["l"]
+                close_val = candle_data["c"]
+                volume_val = candle_data["v"]
+                logger.info(f"[{coin}] Candle OHLCV: O={open_val}, H={high_val}, L={low_val}, C={close_val}, V={volume_val}")
+            else:
+                logger.warning(f"[{coin}] No candle found for {current_candle_time - timedelta(hours=1)} after retry")
 
             # Store
             hl_results[coin] = {
@@ -389,8 +413,8 @@ async def fetch_and_store():
             logger.error(f"[{coin}] Unexpected error processing coin, skipping: {e}", exc_info=True)
 
     # Compute informative prices from BTC and ETH candle close
-    btc_info = hl_results.get("BTC", {}).get("close_val", 0.0)
-    eth_info = hl_results.get("ETH", {}).get("close_val", 0.0)
+    btc_info = hl_results.get("BTC", {}).get("close_val") or 0.0
+    eth_info = hl_results.get("ETH", {}).get("close_val") or 0.0
 
     def sort_order(c):
         if c in ("BTC", "ETH"): return 1
