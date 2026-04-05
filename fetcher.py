@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
 from database import AsyncSessionLocal, OIFunding, init_db
-from sqlalchemy import select
+from sqlalchemy import select, delete
 import logging
 import requests
 import threading
@@ -24,7 +24,7 @@ PAIRS_CONFIG = [
 
 # Blacklist pairs that should not be monitored
 BLACKLIST_PAIRS = {
-    "OM/USDC:USDC"
+    "OM/USDC:USDC", "FTT/USDC:USDC", "kBONK/USDC:USDC", "kPEPE/USDC:USDC", "kSHIB/USDC:USDC"
 }
 
 def parse_pair(p):
@@ -95,6 +95,19 @@ def subscribe_if_needed(coin):
             logger.error(f"Failed to subscribe to trades for {coin}: {e}")
 
 async def initialize_pairs():
+    # 0. Purge blacklisted pairs from the database
+    if BLACKLIST_PAIRS:
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    delete(OIFunding).where(OIFunding.pair.in_(BLACKLIST_PAIRS))
+                )
+                await session.commit()
+                if result.rowcount > 0:
+                    logger.info(f"Purged {result.rowcount} rows for blacklisted pairs: {BLACKLIST_PAIRS}")
+        except Exception as e:
+            logger.error(f"Error purging blacklisted pairs from DB: {e}")
+
     # 1. Load existing pairs from database to ensure monitored pairs are never dropped
     try:
         async with AsyncSessionLocal() as session:
@@ -221,16 +234,24 @@ async def store_data(pair, timestamp, oi, funding, mark_price, taker_buy_volume,
 async def fetch_and_store():
     logger.info("Starting fetch job...")
     
-    # 1. Fetch global state for OI (Snapshots are efficient)
-    try:
-        # meta_and_asset_ctxs is synchronous in the SDK but conducts network calls.
-        # Run in executor to avoid blocking the event loop.
-        meta_data = await asyncio.to_thread(info.meta_and_asset_ctxs)
-        universe = meta_data[0]['universe']
-        asset_ctxs = meta_data[1]
-    except Exception as e:
-        logger.error(f"Error fetching meta_and_asset_ctxs: {e}")
-        return
+    # 1. Fetch global state for OI with retry logic
+    meta_data = None
+    for attempt in range(3):
+        try:
+            meta_data = await asyncio.to_thread(info.meta_and_asset_ctxs)
+            break
+        except Exception as e:
+            logger.error(f"Error fetching meta_and_asset_ctxs (attempt {attempt+1}/3): {e}")
+            if attempt < 2:
+                wait_time = 10 * (attempt + 1)
+                logger.info(f"Retrying in {wait_time}s...")
+                await asyncio.sleep(wait_time)
+            else:
+                logger.error("All retries exhausted for meta_and_asset_ctxs. Aborting Hyperliquid fetch.")
+                return
+    
+    universe = meta_data[0]['universe']
+    asset_ctxs = meta_data[1]
 
     # Map coin name to asset context
     # universe has names. asset_ctxs is a list corresponding to universe?
@@ -252,122 +273,120 @@ async def fetch_and_store():
     
     # 2. Loop through target pairs
     hl_results = {}
+    start_ts = int((current_candle_time - timedelta(hours=1)).timestamp() * 1000)
+    end_ts = int((current_candle_time + timedelta(minutes=5)).timestamp() * 1000)
+    prev_hour_ts = int((current_candle_time - timedelta(hours=1)).timestamp() * 1000)
+    
     for coin, pair_name in TARGET_COINS.items():
-        if coin not in coin_to_ctx:
-            logger.warning(f"Coin {coin} not found in Hyperliquid universe")
-            continue
-        
-        ctx = coin_to_ctx[coin]
-        
-        # Get Open Interest
-        # ctx structure: {'dayNtlVlm': ..., 'funding': ..., 'openInterest': '...', 'markPx': '...', ...}
         try:
-            oi = float(ctx.get('openInterest', 0))
-            logger.info(f"[{coin}] Fetched OI: {oi}")
-        except ValueError:
-            oi = 0.0
-            logger.warning(f"[{coin}] Failed to parse OI, default to 0.0")
-
-        # Get Mark Price
-        try:
-            mark_price = float(ctx.get('markPx', 0))
-            logger.info(f"[{coin}] Fetched Mark Price: {mark_price}")
-        except ValueError:
-            mark_price = 0.0
-            logger.warning(f"[{coin}] Failed to parse Mark Price, default to 0.0")
-
-        # Get Funding Rate
-        
-        start_ts = int((current_candle_time - timedelta(hours=1)).timestamp() * 1000)
-        end_ts = int((current_candle_time + timedelta(minutes=5)).timestamp() * 1000)
-        
-        funding_rate = 0.0
-        try:
-            # Run in executor to avoid blocking the event loop
-            history = await asyncio.to_thread(info.funding_history, coin, start_ts, end_ts)
-            logger.debug(f"[{coin}] Funding history items: {len(history)}")
+            if coin not in coin_to_ctx:
+                logger.warning(f"Coin {coin} not found in Hyperliquid universe")
+                continue
             
-            found = False
-            for item in history:
-                ftime = item['time']
-                ft_dt = datetime.fromtimestamp(ftime/1000, timezone.utc)
-                if abs((ft_dt - current_candle_time).total_seconds()) < 600: # 10 mins
-                    funding_rate = float(item['fundingRate'])
-                    found = True
-                    logger.info(f"[{coin}] Found matched funding rate: {funding_rate} at {ft_dt}")
-                    break
+            ctx = coin_to_ctx[coin]
             
-            if not found:
-                 logger.warning(f"[{coin}] No specific funding found at {current_candle_time}. Fallback to predicted.")
-                 funding_rate = float(ctx.get('funding', 0))
-                 logger.info(f"[{coin}] Predicted funding rate: {funding_rate}")
+            # Get Open Interest
+            try:
+                oi = float(ctx.get('openInterest', 0))
+                logger.info(f"[{coin}] Fetched OI: {oi}")
+            except ValueError:
+                oi = 0.0
+                logger.warning(f"[{coin}] Failed to parse OI, default to 0.0")
 
+            # Get Mark Price
+            try:
+                mark_price = float(ctx.get('markPx', 0))
+                logger.info(f"[{coin}] Fetched Mark Price: {mark_price}")
+            except ValueError:
+                mark_price = 0.0
+                logger.warning(f"[{coin}] Failed to parse Mark Price, default to 0.0")
+
+            # Get Funding Rate
+            funding_rate = 0.0
+            try:
+                history = await asyncio.to_thread(info.funding_history, coin, start_ts, end_ts)
+                logger.debug(f"[{coin}] Funding history items: {len(history)}")
+                
+                found = False
+                for item in history:
+                    ftime = item['time']
+                    ft_dt = datetime.fromtimestamp(ftime/1000, timezone.utc)
+                    if abs((ft_dt - current_candle_time).total_seconds()) < 600: # 10 mins
+                        funding_rate = float(item['fundingRate'])
+                        found = True
+                        logger.info(f"[{coin}] Found matched funding rate: {funding_rate} at {ft_dt}")
+                        break
+                
+                if not found:
+                     logger.warning(f"[{coin}] No specific funding found at {current_candle_time}. Fallback to predicted.")
+                     funding_rate = float(ctx.get('funding', 0))
+                     logger.info(f"[{coin}] Predicted funding rate: {funding_rate}")
+
+            except Exception as e:
+                if "429" in str(e):
+                    logger.warning(f"[{coin}] [V2] Handled 429 Rate Limit for funding history. Falling back to predicted.")
+                    await asyncio.sleep(5.0)
+                else:
+                    logger.error(f"Error fetching funding history for {coin}: {e}")
+                funding_rate = float(ctx.get('funding', 0))
+
+            # Get Accumulated Volume from Websocket Cache
+            taker_buy_volume = 0.0
+            taker_sell_volume = 0.0
+            with volume_lock:
+                taker_buy_volume = volume_cache[coin]["buy"]
+                taker_sell_volume = volume_cache[coin]["sell"]
+                volume_cache[coin]["buy"] = 0.0
+                volume_cache[coin]["sell"] = 0.0
+                
+            cvd = taker_buy_volume - taker_sell_volume
+            logger.info(f"[{coin}] WS Accumulated Taker Buy: {taker_buy_volume:.4f}, Taker Sell: {taker_sell_volume:.4f}, CVD: {cvd:.4f}")
+
+            # Fetch OHLCV candle data from Hyperliquid
+            open_val = 0.0
+            close_val = 0.0
+            high_val = 0.0
+            low_val = 0.0
+            volume_val = 0.0
+            try:
+                candles = await asyncio.to_thread(
+                    info.candles_snapshot, coin, "1h", prev_hour_ts, end_ts
+                )
+                for c in candles:
+                    if c["t"] == prev_hour_ts:
+                        open_val = float(c["o"])
+                        high_val = float(c["h"])
+                        low_val = float(c["l"])
+                        close_val = float(c["c"])
+                        volume_val = float(c["v"])
+                        logger.info(f"[{coin}] Candle OHLCV: O={open_val}, H={high_val}, L={low_val}, C={close_val}, V={volume_val}")
+                        break
+                else:
+                    logger.warning(f"[{coin}] No candle found for {current_candle_time - timedelta(hours=1)}")
+            except Exception as e:
+                logger.error(f"[{coin}] Error fetching candles: {e}")
+
+            # Store
+            hl_results[coin] = {
+                "pair": pair_name,
+                "oi": oi,
+                "funding_rate": funding_rate,
+                "mark_price": mark_price,
+                "taker_buy_volume": taker_buy_volume,
+                "taker_sell_volume": taker_sell_volume,
+                "cvd": cvd,
+                "open_val": open_val,
+                "close_val": close_val,
+                "high_val": high_val,
+                "low_val": low_val,
+                "volume_val": volume_val
+            }
+            
+            # Add a delay to avoid rate-limiting from the exchange (max 60 req/min)
+            await asyncio.sleep(2.0)
+        
         except Exception as e:
-            if "429" in str(e):
-                logger.warning(f"[{coin}] [V2] Handled 429 Rate Limit for funding history. Falling back to predicted.")
-                await asyncio.sleep(5.0) # Additional massive backoff to cool down
-            else:
-                logger.error(f"Error fetching funding history for {coin}: {e}")
-            funding_rate = float(ctx.get('funding', 0))
-
-        # Get Accumlated Volume from Websocket Cache
-        taker_buy_volume = 0.0
-        taker_sell_volume = 0.0
-        with volume_lock:
-            # We snapshot the current accumulated volumes
-            taker_buy_volume = volume_cache[coin]["buy"]
-            taker_sell_volume = volume_cache[coin]["sell"]
-            # Reset cache for the next hour
-            volume_cache[coin]["buy"] = 0.0
-            volume_cache[coin]["sell"] = 0.0
-            
-        cvd = taker_buy_volume - taker_sell_volume
-        logger.info(f"[{coin}] WS Accumulated Taker Buy: {taker_buy_volume:.4f}, Taker Sell: {taker_sell_volume:.4f}, CVD: {cvd:.4f}")
-
-        # Fetch OHLCV candle data from Hyperliquid
-        open_val = 0.0
-        close_val = 0.0
-        high_val = 0.0
-        low_val = 0.0
-        volume_val = 0.0
-        prev_hour_ts = int((current_candle_time - timedelta(hours=1)).timestamp() * 1000)
-        try:
-            candles = await asyncio.to_thread(
-                info.candles_snapshot, coin, "1h", prev_hour_ts, end_ts
-            )
-            # Find candle matching previous hour (completed candle)
-            for c in candles:
-                if c["t"] == prev_hour_ts:
-                    open_val = float(c["o"])
-                    high_val = float(c["h"])
-                    low_val = float(c["l"])
-                    close_val = float(c["c"])
-                    volume_val = float(c["v"])
-                    logger.info(f"[{coin}] Candle OHLCV: O={open_val}, H={high_val}, L={low_val}, C={close_val}, V={volume_val}")
-                    break
-            else:
-                logger.warning(f"[{coin}] No candle found for {current_candle_time - timedelta(hours=1)}")
-        except Exception as e:
-            logger.error(f"[{coin}] Error fetching candles: {e}")
-
-        # Store
-        hl_results[coin] = {
-            "pair": pair_name,
-            "oi": oi,
-            "funding_rate": funding_rate,
-            "mark_price": mark_price,
-            "taker_buy_volume": taker_buy_volume,
-            "taker_sell_volume": taker_sell_volume,
-            "cvd": cvd,
-            "open_val": open_val,
-            "close_val": close_val,
-            "high_val": high_val,
-            "low_val": low_val,
-            "volume_val": volume_val
-        }
-        
-        # Add a delay to avoid rate-limiting from the exchange (max 60 req/min)
-        await asyncio.sleep(2.0)
+            logger.error(f"[{coin}] Unexpected error processing coin, skipping: {e}", exc_info=True)
 
     # Compute informative prices from BTC and ETH candle close
     btc_info = hl_results.get("BTC", {}).get("close_val", 0.0)
@@ -386,6 +405,8 @@ async def fetch_and_store():
             low_val=d["low_val"], volume_val=d["volume_val"],
             btc_info=btc_info, eth_info=eth_info
         )
+
+    logger.info(f"Hyperliquid fetch complete: {len(hl_results)}/{len(TARGET_COINS)} pairs stored at {current_candle_time}")
 
 async def fetch_and_store_binance():
     logger.info("Starting Binance fetch job...")
