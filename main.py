@@ -35,7 +35,7 @@ async def startup_event():
     # Hyperliquid at minute=2 to give the exchange time to finalize the previous hour's candle
     scheduler.add_job(fetch_and_store, "cron", minute=2)
     scheduler.add_job(fetch_and_store_binance, "cron", minute=0)
-    scheduler.add_job(healthcheck_job, "cron", minute=5)
+    scheduler.add_job(healthcheck_job, "cron", minute=10)
     
     # Schedule WS watchdog every 1 minute
     scheduler.add_job(check_websocket_health, "interval", minutes=1)
