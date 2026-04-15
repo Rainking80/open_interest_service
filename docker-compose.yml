@@ -5,8 +5,8 @@ services:
       - "9123:8000"
     environment:
       - DATABASE_URL=sqlite+aiosqlite:////app/data/open_interest.db
-      - TELEGRAM_BOT_TOKEN=8796278403:AAGOXG8rOaQmyRtToHl4fXeh3J8uhr2fj7Q
-      - TELEGRAM_CHAT_ID=1328740434
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
     volumes:
       - ./data:/app/data
     restart: unless-stopped
