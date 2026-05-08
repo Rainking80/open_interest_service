@@ -24,7 +24,8 @@ PAIRS_CONFIG = [
 
 # Blacklist pairs that should not be monitored
 BLACKLIST_PAIRS = {
-    "OM/USDC:USDC", "FTT/USDC:USDC", "kBONK/USDC:USDC", "kPEPE/USDC:USDC", "kSHIB/USDC:USDC"
+    "OM/USDC:USDC", "FTT/USDC:USDC", "kBONK/USDC:USDC", "kPEPE/USDC:USDC", "kSHIB/USDC:USDC",
+    "PROMPT/USDC:USDC"
 }
 
 def parse_pair(p):
