@@ -1,6 +1,6 @@
 # Open Interest Service
 
-A lightweight, Dockerized microservice that fetches **Open Interest (OI)** and **Funding Rates** from [Hyperliquid](https://hyperliquid.xyz/) in real-time. It stores the data in a local SQLite database and provides a REST API for easy retrieval.
+A lightweight, Dockerized microservice that fetches **Open Interest (OI)** and **Funding Rates** from [Hyperliquid](https://hyperliquid.xyz/) in real-time. It stores the data in a local SQLite database and provides a REST API for easy retrieval. Testversion.
 
 ## Features
 
